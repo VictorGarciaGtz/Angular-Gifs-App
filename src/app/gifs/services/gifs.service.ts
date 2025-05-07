@@ -1,9 +1,21 @@
 import { HttpClient } from '@angular/common/http';
-import { inject, Injectable, signal } from '@angular/core';
+import { computed, effect, inject, Injectable, signal } from '@angular/core';
 import { environment } from '@environments/environment';
 import type { GiphyResponse } from '../interfaces/giphy.interfaces';
 import type { Gif } from '../interfaces/gif.interface';
 import { GifMapper } from '../mapper/gif.mapper';
+import { map, tap } from 'rxjs';
+
+const GIF_KEY = 'gifs';
+
+const loadFromLocalStorage = () => {
+  const gifsFromLocalStorage = localStorage.getItem(GIF_KEY) ?? '{}';
+
+  const gifs = JSON.parse(gifsFromLocalStorage);
+
+  return gifs;
+
+}
 
 @Injectable({providedIn: 'root'})
 export class GifsService {
@@ -15,7 +27,15 @@ export class GifsService {
   trendingGifs = signal<Gif[]>([]);
   trendingGifsLoading = signal(true);
 
+  searchHistory = signal<Record<string, Gif[]>>(loadFromLocalStorage());
+  searchHistoryKeys = computed(( ) => Object.keys(this.searchHistory()));
+
   private http = inject(HttpClient);
+
+  saveGifsToLocalStorage = effect(() => {
+    const historyString = JSON.stringify(this.searchHistory());
+    localStorage.setItem(GIF_KEY, historyString);
+  })
 
   loadTrendingGifs() {
     this.http.get<GiphyResponse>(`${ environment.giphyUrl }/gifs/trending`, {
@@ -32,16 +52,32 @@ export class GifsService {
   }
 
   searchGifs(query:string) {
-    this.http.get<GiphyResponse>(`${ environment.giphyUrl }/gifs/search`, {
+    return this.http.get<GiphyResponse>(`${ environment.giphyUrl }/gifs/search`, {
       params: {
         api_key: environment.gifhyApiKey,
         limit: 20,
         q: query
       }
-    }).subscribe( (resp) => {
-      const gifs = GifMapper.mapGiphyItemsToGifArray(resp.data);
+    })
+    .pipe(
+      map(({ data }) => data),
+      map((items) => GifMapper.mapGiphyItemsToGifArray(items)),
 
-      console.log(gifs);
-    });
+      //History
+      tap(items => {
+        this.searchHistory.update(history => ({
+          ...history,
+          [query.toLocaleLowerCase()]: items
+        }))
+      })
+    )
+    // .subscribe( (resp) => {
+    //   const gifs = GifMapper.mapGiphyItemsToGifArray(resp.data);
+
+    // });
+  }
+
+  getHistoryGifs( query: string ): Gif[] {
+    return this.searchHistory()[query] ?? [];
   }
 }
